@@ -62,9 +62,56 @@
 
 use std::fmt;
 
+#[cfg(not(miri))]
 use rayon::prelude::*;
 
 use crate::{CharacterDNA, SkinnedVertex};
+
+// ============================================================================
+// Miri/rayon interop note
+// ============================================================================
+//
+// Rayon's implicit global thread pool spawns worker threads that park
+// forever waiting for work and are never joined — normal and harmless
+// under a real OS (they're reaped on process exit), but Miri explicitly
+// checks that no other threads are still alive when the main thread
+// finishes, so any test that touches `par_iter()`/`par_iter_mut()` fails
+// with "the main thread terminated without waiting for all remaining
+// threads". This is a known, unfixable-from-userland Miri/rayon
+// incompatibility (the global pool has no shutdown hook), not a bug in
+// this crate — see https://users.rust-lang.org/t/how-to-test-rayon-with-miri/67314.
+//
+// Miri is checking correctness/UB, not performance, so losing
+// parallelism under it costs nothing real. These two macros pick
+// `par_iter`/`par_iter_mut` normally and fall back to the equivalent
+// sequential `iter`/`iter_mut` under `cfg(miri)`, so `build_cloth_anchors`
+// and `fit_clothing_to_skin` stay genuinely parallel in production while
+// still being fully Miri-checkable for everything *other than* threading.
+#[cfg(not(miri))]
+macro_rules! cloth_iter {
+    ($e:expr) => {
+        $e.par_iter()
+    };
+}
+#[cfg(miri)]
+macro_rules! cloth_iter {
+    ($e:expr) => {
+        $e.iter()
+    };
+}
+
+#[cfg(not(miri))]
+macro_rules! cloth_iter_mut {
+    ($e:expr) => {
+        $e.par_iter_mut()
+    };
+}
+#[cfg(miri)]
+macro_rules! cloth_iter_mut {
+    ($e:expr) => {
+        $e.iter_mut()
+    };
+}
 
 // ============================================================================
 // Public data types
@@ -475,8 +522,7 @@ pub(crate) fn build_cloth_anchors_with_tree(
     // anchor computation is independent of every other, so this fans out
     // across rayon's thread pool via `par_iter()` rather than running
     // serially.
-    cloth_vertices
-        .par_iter()
+    cloth_iter!(cloth_vertices)
         .map(|cloth_vertex| {
             let sample_index = skin_tree.tree.nearest(&skin_tree.sample_positions, cloth_vertex.position);
             let full_index = skin_tree.sample_to_full_index[sample_index as usize];
@@ -613,9 +659,8 @@ pub fn fit_clothing_to_skin(
 
     let skin_vertex_count = skin_vertices.len();
 
-    cloth_vertices
-        .par_iter_mut()
-        .zip(anchors.par_iter())
+    cloth_iter_mut!(cloth_vertices)
+        .zip(cloth_iter!(anchors))
         .enumerate()
         .try_for_each(|(cloth_index, (cloth_vertex, anchor))| {
             let skin_index = anchor.target_skin_vertex_index as usize;
