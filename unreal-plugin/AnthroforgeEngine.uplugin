@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Anthroforge Engine",
+	"Description": "Runtime procedural character generation: loads the anthroforge_core Rust FFI library and assembles skinned character meshes onto UDynamicMeshComponent off the Game Thread.",
+	"Category": "Characters",
+	"CreatedBy": "Anthroforge",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "AnthroforgeEngine",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

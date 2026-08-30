@@ -1,0 +1,88 @@
+[package]
+name = "anthroforge-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Anthroforge Runtime Procedural Character Generation Engine - Rust FFI core"
+
+# `cdylib` produces the dynamic library (`.dll` / `.so` / `.dylib`) that the
+# Unreal Engine C++ plugin loads and binds against via `extern "C"`.
+[lib]
+name = "anthroforge_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+# glTF/GLB parsing (buffers, accessors, skins).
+#
+# `default-features = false` + explicit ["utils", "names"] deliberately
+# excludes the crate's `import` feature. `import` bundles image decoding
+# (JPEG/PNG via the `image` crate) purely so `gltf::import()` can also hand
+# back texture pixel data — this phase never touches textures/images, only
+# geometry, so that whole dependency subtree is dead weight we don't want
+# in a runtime-loaded FFI `cdylib`. `Gltf::open`/`from_slice` (JSON + GLB
+# binary-chunk parsing) and the attribute-reading utilities in `utils` are
+# both available without it; this crate does its own minimal buffer-source
+# resolution (see `gltf_loader::load_buffers`) instead of `gltf::import`.
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"] }
+
+# Decodes `data:` URI embedded buffers in `.gltf` files (external `.bin`
+# files and embedded-GLB `BIN` chunks need no decoding).
+base64 = "0.21"
+
+# master_skeleton.json (name -> global bone index) deserialization.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# `.obj`/`.mtl` parsing for the fallback loader (static, unskinned modular
+# parts). `single_index = true` at the call site makes it emit one aligned
+# position/normal/texcoord per vertex (matching how `gltf_loader` already
+# treats attributes), so no separate re-indexing pass is needed.
+tobj = "4.0"
+
+# Genuine data-parallelism for the anti-clipping clothing deformer
+# (`fit_clothing_to_skin` fans out per-vertex work with `par_iter_mut()`;
+# `build_cloth_anchors`'s init-time 1-NN pass uses `par_iter()`). NOTE:
+# `clothing_deformer` is compiled into the crate but not yet reachable from
+# any `extern "C"` export — see lib.rs's module doc comment and the Phase 5
+# write-up.
+rayon = "1.10"
+
+# Note: GLOBAL_REGISTRY uses std::sync::OnceLock (stable since Rust 1.70),
+# so no separate `once_cell` dependency is required. `texture_atlas` uses
+# only `std` (std::thread::scope, std::panic::catch_unwind).
+
+[profile.release]
+# Test 03 (panic/abort behavior at the FFI boundary) changed this from
+# `panic = "abort"` to `panic = "unwind"`. Full empirical verification and
+# reasoning is in RESULTS-03.md; summary:
+#
+# - Under the old `panic = "abort"`, an internal panic anywhere in this
+#   crate aborted the process immediately — including inside
+#   `generate_runtime_atlas`, whose `std::panic::catch_unwind` wrapper
+#   (see texture_atlas.rs) exists specifically to turn a panic into a
+#   clean `null` return. `catch_unwind` cannot run under `panic = "abort"`
+#   (the abort happens before any unwinding starts), so that function's
+#   own doc comment was promising a guarantee it could not keep. Verified
+#   empirically: calling the real `extern "C"` entry point through a
+#   C-linked probe binary and triggering an internal panic produced
+#   SIGABRT (exit 134), not a `null` return.
+# - Switching to `panic = "unwind"` makes `catch_unwind` work as intended
+#   for `generate_runtime_atlas`/`free_atlas_buffer` — verified with the
+#   same probe: the same trigger now returns `null` cleanly, exit 0.
+# - `init_part_registry` and `generate_character` do not use
+#   `catch_unwind`. This was audited (see lib.rs module doc comment and
+#   RESULTS-03.md): switching this setting does NOT change their behavior
+#   on an internal panic, because Rust aborts the process whenever a
+#   panic would unwind past a plain `extern "C"` function (not declared
+#   `extern "C-unwind"`) regardless of the crate's panic profile — also
+#   verified empirically with the probe binary. They were never relying
+#   on `panic = "abort"` specifically for correctness, only on this
+#   FFI-unwind guard, which still applies.
+#
+# If this is ever changed back to `"abort"`, `generate_runtime_atlas` and
+# `free_atlas_buffer`'s panic-safety guarantee silently breaks again in
+# release builds — re-run the manual probe in RESULTS-03.md (the in-crate
+# `#[cfg(test)]` regression test alone won't catch this, since `cargo
+# test` does not build with the `[profile.release]` settings).
+panic = "unwind"
+lto = true

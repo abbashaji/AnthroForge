@@ -1,0 +1,23 @@
+{
+  "root": 0,
+  "pelvis": 1,
+  "spine_01": 2,
+  "spine_02": 3,
+  "spine_03": 4,
+  "neck_01": 5,
+  "head": 6,
+  "clavicle_l": 7,
+  "upperarm_l": 8,
+  "lowerarm_l": 9,
+  "hand_l": 10,
+  "clavicle_r": 11,
+  "upperarm_r": 12,
+  "lowerarm_r": 13,
+  "hand_r": 14,
+  "thigh_l": 15,
+  "calf_l": 16,
+  "foot_l": 17,
+  "thigh_r": 18,
+  "calf_r": 19,
+  "foot_r": 20
+}

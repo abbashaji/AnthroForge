@@ -1,0 +1,120 @@
+name: Phase 7 Verification (Miri, Sanitizers, Cross-Platform Builds)
+
+# This workflow could not be dry-run in the sandbox it was authored in —
+# that environment's network policy blocks fetching any nightly (or even
+# stable-via-rustup) Rust toolchain, so Miri/sanitizer builds are
+# impossible to test there. GitHub-hosted runners have full network
+# access and native Windows/macOS machines, which is why this exists as
+# a workflow rather than another fresh-context task. Treat this as a
+# well-reasoned first draft: expect it may need real debugging against
+# actual Actions logs the first time it runs, the same way any untested
+# CI config would.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: rust-core
+
+jobs:
+  miri:
+    name: Miri (undefined behavior detection)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly + Miri
+        run: |
+          rustup toolchain install nightly --component miri
+          rustup default nightly
+      - name: cargo miri test
+        run: cargo miri test
+        # Miri interprets the crate's own #[cfg(test)] unit tests (this
+        # crate has no separate tests/ directory — see Cargo.toml's
+        # crate-type = ["cdylib"] comment for why). This includes the
+        # Phase 7 concurrent stress test; note Miri's own concurrency
+        # model is simplified relative to real hardware scheduling, so it
+        # complements rather than replaces the TSan job below, not the
+        # other way around.
+
+  sanitizers:
+    name: Sanitizers (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    env:
+      RUSTFLAGS: -Z sanitizer=${{ matrix.sanitizer }}
+      RUSTDOCFLAGS: -Z sanitizer=${{ matrix.sanitizer }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly with rust-src (needed for -Z build-std)
+        run: |
+          rustup toolchain install nightly --component rust-src
+          rustup default nightly
+      - name: cargo test under ${{ matrix.sanitizer }} sanitizer
+        run: |
+          cargo test --release \
+            -Z build-std \
+            --target x86_64-unknown-linux-gnu
+        # -Z build-std is required because sanitizer instrumentation has
+        # to cover std itself, not just this crate, to avoid false
+        # negatives at the std/crate boundary. This specifically exercises
+        # the Phase 7 concurrent stress test under real instrumentation —
+        # if that test's probabilistic real-scheduling approach missed
+        # something, this is the job likely to catch it instead.
+
+  build-windows:
+    name: Native Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo build --release
+        run: cargo build --release
+        # Native build on a real Windows machine — no cross-compilation,
+        # so no target-std-fetching problem the way the authoring sandbox
+        # had. Produces the real anthroforge_core.dll.
+      - name: Upload dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anthroforge_core-windows
+          path: rust-core/target/release/anthroforge_core.dll
+
+  build-macos:
+    name: Native macOS build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo build --release
+        run: cargo build --release
+        # Native build on a real Mac — produces the real
+        # anthroforge_core.dylib. This is the first time this project's
+        # macOS build has been attempted at all, on any machine.
+      - name: Upload dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anthroforge_core-macos
+          path: rust-core/target/release/libanthroforge_core.dylib
+
+  build-linux-baseline:
+    name: Linux build + full test suite (regression baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo build --release
+        run: cargo build --release
+      - name: cargo test --release
+        run: cargo test --release
+        # Ordinary stable build/test, matching what's already been
+        # verified by hand throughout this project — kept here so a
+        # regression on the "boring" platform shows up in the same place
+        # as the sanitizer/cross-platform findings, not just locally.
+      - name: Upload dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anthroforge_core-linux
+          path: rust-core/target/release/libanthroforge_core.so
