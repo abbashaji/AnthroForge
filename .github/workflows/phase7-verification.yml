@@ -24,6 +24,17 @@ jobs:
   miri:
     name: Miri (undefined behavior detection)
     runs-on: ubuntu-latest
+    env:
+      # crossbeam-epoch (a rayon internal dependency, used by
+      # clothing_deformer.rs's par_iter() calls) has long-standing,
+      # documented Stacked Borrows violations that are not actual bugs —
+      # see crossbeam-rs/crossbeam#1181, #878, #545. The standard
+      # workaround is Miri's Tree Borrows model instead of the (stricter,
+      # default) Stacked Borrows model. This is a real aliasing-model
+      # switch, not disabling checking — it still catches genuine UB, just
+      # not this specific well-known false-positive class from a
+      # third-party dependency's internals.
+      MIRIFLAGS: -Zmiri-tree-borrows
     steps:
       - uses: actions/checkout@v4
       - name: Install nightly + Miri
