@@ -28,13 +28,21 @@ jobs:
       # crossbeam-epoch (a rayon internal dependency, used by
       # clothing_deformer.rs's par_iter() calls) has long-standing,
       # documented Stacked Borrows violations that are not actual bugs —
-      # see crossbeam-rs/crossbeam#1181, #878, #545. The standard
-      # workaround is Miri's Tree Borrows model instead of the (stricter,
-      # default) Stacked Borrows model. This is a real aliasing-model
-      # switch, not disabling checking — it still catches genuine UB, just
-      # not this specific well-known false-positive class from a
-      # third-party dependency's internals.
-      MIRIFLAGS: -Zmiri-tree-borrows
+      # see crossbeam-rs/crossbeam#1181, #878, #545. -Zmiri-tree-borrows
+      # is the standard workaround. This is a real aliasing-model switch,
+      # not disabling checking — it still catches genuine UB, just not
+      # this specific well-known false-positive class from a third-party
+      # dependency's internals.
+      #
+      # -Zmiri-disable-isolation is required separately: most of this
+      # crate's tests build a real temp asset directory with real files
+      # (the make_temp_asset_dir pattern used throughout, e.g.
+      # gltf_loader.rs's write_temp_glb), and Miri's default isolation
+      # mode rejects real filesystem access outright. This does not weaken
+      # UB detection — isolation is about reproducibility/host access, a
+      # separate concern from the aliasing/memory-safety checks Miri
+      # actually exists to run.
+      MIRIFLAGS: -Zmiri-tree-borrows -Zmiri-disable-isolation
     steps:
       - uses: actions/checkout@v4
       - name: Install nightly + Miri
